@@ -26,7 +26,14 @@
 
   function safeNameWithoutExt(name) {
     const lastDot = name.lastIndexOf(".");
-    return (lastDot > 0 ? name.slice(0, lastDot) : name).replace(/[^a-zA-Z0-9_-]/g, "_");
+    const stem = (lastDot > 0 ? name.slice(0, lastDot) : name).trim();
+    const cleaned = stem
+      .normalize("NFC")
+      .replace(/[\\/:*?"<>|]/g, "_")
+      .replace(/\s+/g, " ")
+      .replace(/^\.+|\.+$/g, "")
+      .trim();
+    return cleaned || "converted_audio";
   }
 
   function encodePcm16Wav(floatSamples, sampleRate, channels = 1) {
