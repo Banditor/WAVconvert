@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>WAV Converter (Mono 8kHz PCM16)</title>
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <main class="page">
+      <section class="card">
+        <h1>Audio Converter</h1>
+        <p class="subtitle">Convert any audio to WAV (PCM 16-bit, Mono, 8000 Hz) directly in your browser.</p>
+
+        <label id="dropzone" class="dropzone" for="fileInput" aria-label="Drop audio file here">
+          <input id="fileInput" type="file" accept="audio/*" />
+          <span id="dropText">Drag & drop an audio file here, or click to choose</span>
+        </label>
+
+        <div class="meta">
+          <p id="selectedFile">No file selected</p>
+          <p class="preset">Output preset: WAV / PCM s16le / Mono / 8000 Hz</p>
+        </div>
+
+        <button id="convertBtn" disabled>Convert & Download</button>
+
+        <div class="progress-wrap" aria-live="polite">
+          <progress id="progressBar" max="100" value="0"></progress>
+          <span id="progressText">0%</span>
+        </div>
+
+        <p id="status" class="status">Loading converter core...</p>
+      </section>
+    </main>
+
+    <script src="./vendor/ffmpeg/ffmpeg.js"></script>
+    <script src="./vendor/ffmpeg/util-index.js"></script>
+    <script src="./app.js"></script>
+  </body>
+</html>

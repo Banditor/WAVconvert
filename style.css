@@ -1,0 +1,141 @@
+:root {
+  --bg: #f4f5f7;
+  --card: #ffffff;
+  --text: #1a1d29;
+  --muted: #5c6275;
+  --accent: #1f7a8c;
+  --accent-2: #16324f;
+  --border: #d8dce6;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: "Segoe UI", "Noto Sans", sans-serif;
+  color: var(--text);
+  background:
+    radial-gradient(circle at 20% 10%, #d6eef2 0, transparent 35%),
+    radial-gradient(circle at 80% 90%, #d5def5 0, transparent 38%),
+    var(--bg);
+  min-height: 100vh;
+}
+
+.page {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+}
+
+.card {
+  width: min(680px, 100%);
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 24px;
+  box-shadow: 0 14px 34px rgba(22, 50, 79, 0.12);
+}
+
+h1 {
+  margin: 0 0 8px;
+  font-size: 1.8rem;
+}
+
+.subtitle {
+  margin: 0 0 18px;
+  color: var(--muted);
+}
+
+.dropzone {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  min-height: 140px;
+  border: 2px dashed var(--accent);
+  border-radius: 14px;
+  padding: 16px;
+  background: #f8fcfd;
+  cursor: pointer;
+  transition: background 0.2s ease, transform 0.2s ease;
+}
+
+.dropzone.dragover {
+  background: #e6f5f7;
+  transform: translateY(-1px);
+}
+
+.dropzone input {
+  display: none;
+}
+
+.meta {
+  margin: 12px 0 14px;
+}
+
+#selectedFile {
+  margin: 0;
+  font-weight: 600;
+}
+
+.preset {
+  margin: 6px 0 0;
+  color: var(--muted);
+  font-size: 0.95rem;
+}
+
+button {
+  width: 100%;
+  border: 0;
+  border-radius: 12px;
+  background: linear-gradient(120deg, var(--accent), var(--accent-2));
+  color: #fff;
+  padding: 13px 16px;
+  font-size: 1rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.progress-wrap {
+  margin-top: 14px;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 10px;
+  align-items: center;
+}
+
+progress {
+  width: 100%;
+  height: 14px;
+}
+
+.status {
+  margin: 12px 0 0;
+  color: var(--muted);
+}
+
+.status.error {
+  color: #b42318;
+}
+
+.status.ok {
+  color: #067647;
+}
+
+@media (max-width: 560px) {
+  .card {
+    padding: 16px;
+  }
+
+  h1 {
+    font-size: 1.45rem;
+  }
+}
