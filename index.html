@@ -12,10 +12,13 @@
         <h1>Audio Converter</h1>
         <p class="subtitle">Convert any audio to WAV (PCM 16-bit, Mono, 8000 Hz) directly in your browser.</p>
 
-        <label id="dropzone" class="dropzone" for="fileInput" aria-label="Drop audio file here">
-          <input id="fileInput" type="file" accept="audio/*" />
-          <span id="dropText">Drag & drop an audio file here, or click to choose</span>
-        </label>
+        <div id="dropzone" class="dropzone" aria-label="Drop audio file here">
+          <span id="dropText">Drag & drop an audio file here</span>
+        </div>
+        <div class="picker-row">
+          <label for="fileInput" class="picker-label">Or choose file:</label>
+          <input id="fileInput" class="file-picker" type="file" accept="audio/*,.wav,.mp3,.m4a,.aac,.ogg,.flac" />
+        </div>
 
         <div class="meta">
           <p id="selectedFile">No file selected</p>

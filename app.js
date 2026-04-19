@@ -153,8 +153,8 @@
     setFile(file);
   });
 
-  dropzone.addEventListener("click", () => {
-    fileInput.click();
+  fileInput.addEventListener("click", () => {
+    fileInput.value = "";
   });
 
   dropzone.addEventListener("dragover", (e) => {
