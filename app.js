@@ -1,7 +1,4 @@
-(() => {
-  const { FFmpeg } = FFmpegWASM;
-  const { fetchFile } = FFmpegUtil;
-
+﻿(() => {
   const fileInput = document.getElementById("fileInput");
   const dropzone = document.getElementById("dropzone");
   const selectedFileEl = document.getElementById("selectedFile");
@@ -10,11 +7,8 @@
   const progressText = document.getElementById("progressText");
   const statusEl = document.getElementById("status");
 
-  const ffmpeg = new FFmpeg();
   let selectedFile = null;
-  let isReady = false;
   let isConverting = false;
-  let useWebAudioFallback = false;
 
   function setStatus(text, mode = "") {
     statusEl.textContent = text;
@@ -80,10 +74,16 @@
       throw new Error("WebAudio conversion is not supported in this browser");
     }
 
+    progressBar.value = 10;
+    progressText.textContent = "10%";
+
     const inputData = await file.arrayBuffer();
     const audioCtx = new AudioCtx();
     const decodedBuffer = await audioCtx.decodeAudioData(inputData.slice(0));
     await audioCtx.close();
+
+    progressBar.value = 45;
+    progressText.textContent = "45%";
 
     const targetRate = 8000;
     const targetLength = Math.max(1, Math.ceil(decodedBuffer.duration * targetRate));
@@ -93,6 +93,10 @@
     source.connect(offlineCtx.destination);
     source.start(0);
     const rendered = await offlineCtx.startRendering();
+
+    progressBar.value = 85;
+    progressText.textContent = "85%";
+
     const mono = rendered.getChannelData(0);
     const wav = encodePcm16Wav(mono, targetRate, 1);
     return new Blob([wav], { type: "audio/wav" });
@@ -115,63 +119,11 @@
   function setFile(file) {
     selectedFile = file;
     selectedFileEl.textContent = file ? `Selected: ${file.name}` : "No file selected";
-    convertBtn.disabled = !(file && isReady && !isConverting);
-  }
-
-  async function init() {
-    try {
-      const loadSources = [
-        "./vendor/ffmpeg",
-        "https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.6/dist/umd",
-        "https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd"
-      ];
-
-      ffmpeg.on("progress", ({ progress }) => {
-        const pct = Math.max(0, Math.min(100, Math.round(progress * 100)));
-        progressBar.value = pct;
-        progressText.textContent = `${pct}%`;
-      });
-
-      let loaded = false;
-      let lastErr = null;
-
-      for (let i = 0; i < loadSources.length && !loaded; i += 1) {
-        const baseURL = loadSources[i];
-        const bust = `v=${Date.now()}_${i}`;
-        setStatus(`Loading converter core... (attempt ${i + 1}/${loadSources.length})`);
-        try {
-          const loadPromise = ffmpeg.load({
-            coreURL: `${baseURL}/ffmpeg-core.js?${bust}`,
-            wasmURL: `${baseURL}/ffmpeg-core.wasm?${bust}`
-          });
-          const timeoutPromise = new Promise((_, reject) => {
-            setTimeout(() => reject(new Error("FFmpeg core load timeout")), 180000);
-          });
-          await Promise.race([loadPromise, timeoutPromise]);
-          loaded = true;
-        } catch (err) {
-          lastErr = err;
-        }
-      }
-
-      if (!loaded) {
-        throw lastErr || new Error("Unable to load ffmpeg core");
-      }
-
-      isReady = true;
-      setStatus("Converter is ready.", "ok");
-      convertBtn.disabled = !selectedFile;
-    } catch (err) {
-      console.error(err);
-      useWebAudioFallback = true;
-      isReady = true;
-      convertBtn.disabled = !selectedFile;
-      setStatus("FFmpeg load failed. Using browser fallback mode.", "ok");
-    }
+    convertBtn.disabled = !(file && !isConverting);
   }
 
   async function convert() {
-    if (!selectedFile || !isReady || isConverting) {
+    if (!selectedFile || isConverting) {
       return;
     }
 
@@ -179,57 +131,20 @@
     convertBtn.disabled = true;
     progressBar.value = 0;
     progressText.textContent = "0%";
-    setStatus("Converting...");
-
-    const inputName = `input_${Date.now()}`;
-    const outputName = "output_converted.wav";
+    setStatus("Converting...", "");
 
     try {
-      let blob;
-      if (useWebAudioFallback) {
-        blob = await convertViaWebAudio(selectedFile);
-      } else {
-        await ffmpeg.writeFile(inputName, await fetchFile(selectedFile));
-        await ffmpeg.exec([
-          "-i", inputName,
-          "-ac", "1",
-          "-ar", "8000",
-          "-acodec", "pcm_s16le",
-          outputName
-        ]);
-        const outData = await ffmpeg.readFile(outputName);
-        blob = new Blob([outData.buffer], { type: "audio/wav" });
-      }
-
+      const blob = await convertViaWebAudio(selectedFile);
       const downloadName = triggerDownload(blob, selectedFile.name);
-
-      setStatus(`Done. Download started: ${downloadName}`, "ok");
       progressBar.value = 100;
       progressText.textContent = "100%";
-      if (!useWebAudioFallback) {
-        await ffmpeg.deleteFile(inputName);
-        await ffmpeg.deleteFile(outputName);
-      }
+      setStatus(`Done. Download started: ${downloadName}`, "ok");
     } catch (err) {
       console.error(err);
-      if (!useWebAudioFallback) {
-        try {
-          setStatus("FFmpeg failed, trying browser fallback...");
-          const blob = await convertViaWebAudio(selectedFile);
-          const downloadName = triggerDownload(blob, selectedFile.name);
-          useWebAudioFallback = true;
-          setStatus(`Done (fallback). Download started: ${downloadName}`, "ok");
-          progressBar.value = 100;
-          progressText.textContent = "100%";
-          return;
-        } catch (fallbackErr) {
-          console.error(fallbackErr);
-        }
-      }
       setStatus("Conversion failed. Try another file.", "error");
     } finally {
       isConverting = false;
-      convertBtn.disabled = !(selectedFile && isReady);
+      convertBtn.disabled = !selectedFile;
     }
   }
 
@@ -259,5 +174,5 @@
 
   convertBtn.addEventListener("click", convert);
 
-  init();
+  setStatus("Ready.", "ok");
 })();
