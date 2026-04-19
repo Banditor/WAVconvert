@@ -153,6 +153,10 @@
     setFile(file);
   });
 
+  dropzone.addEventListener("click", () => {
+    fileInput.click();
+  });
+
   dropzone.addEventListener("dragover", (e) => {
     e.preventDefault();
     dropzone.classList.add("dragover");
@@ -167,7 +171,6 @@
     dropzone.classList.remove("dragover");
     const file = e.dataTransfer?.files?.[0] || null;
     if (file) {
-      fileInput.files = e.dataTransfer.files;
       setFile(file);
     }
   });
