@@ -9,6 +9,7 @@
   const latestDownloadBtn = document.getElementById("latestDownloadBtn");
   const storageConfig = window.WAV_STORAGE_CONFIG || {};
   const latestMirrorPath = "./latest/latest.wav";
+  const latestMetadataPath = "./latest/metadata.json";
 
   let selectedFile = null;
   let isConverting = false;
@@ -32,6 +33,17 @@
       .replace(/^\.+|\.+$/g, "")
       .trim();
     return cleaned || "converted_audio";
+  }
+
+  function safeDownloadName(name) {
+    const cleaned = String(name || "")
+      .normalize("NFC")
+      .replace(/[\\/:*?"<>|]/g, "_")
+      .replace(/\s+/g, " ")
+      .replace(/^\.+|\.+$/g, "")
+      .trim();
+    const withExtension = /\.wav$/i.test(cleaned) ? cleaned : `${cleaned}.wav`;
+    return cleaned ? withExtension : "latest_converted.wav";
   }
 
   function encodePcm16Wav(floatSamples, sampleRate, channels = 1) {
@@ -106,9 +118,8 @@
     return new Blob([wav], { type: "audio/wav" });
   }
 
-  function triggerDownload(blob, originalName) {
-    const stem = safeNameWithoutExt(originalName);
-    const downloadName = `${stem}_converted.wav`;
+  function triggerNamedDownload(blob, name) {
+    const downloadName = safeDownloadName(name);
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
@@ -118,6 +129,11 @@
     a.remove();
     URL.revokeObjectURL(url);
     return downloadName;
+  }
+
+  function triggerDownload(blob, originalName) {
+    const stem = safeNameWithoutExt(originalName);
+    return triggerNamedDownload(blob, `${stem}_converted.wav`);
   }
 
   function getStorageObjectUrl() {
@@ -148,24 +164,52 @@
     };
   }
 
-  async function saveLatestConversion(blob) {
+  async function saveLatestConversion(blob, downloadName) {
     const objectUrl = getStorageObjectUrl();
     if (!objectUrl) {
       throw new Error("Cloud storage is not configured");
     }
 
+    const formData = new FormData();
+    formData.append("cacheControl", "0");
+    formData.append(
+      "metadata",
+      JSON.stringify({ downloadName: safeDownloadName(downloadName) }),
+    );
+    formData.append("", blob, storageConfig.objectPath || "latest.wav");
+
     const response = await fetch(objectUrl, {
       method: "POST",
       headers: getStorageHeaders({
-        "Content-Type": "audio/wav",
-        "Cache-Control": "no-cache",
         "x-upsert": "true",
       }),
-      body: blob,
+      body: formData,
     });
 
     if (!response.ok) {
       throw new Error(`Cloud upload failed with status ${response.status}`);
+    }
+  }
+
+  async function getLatestDownloadName(cacheBuster) {
+    try {
+      const response = await fetch(
+        `${latestMetadataPath}?v=${cacheBuster}`,
+        {
+          method: "GET",
+          cache: "no-store",
+        },
+      );
+
+      if (!response.ok) {
+        return "latest_converted.wav";
+      }
+
+      const metadata = await response.json();
+      return safeDownloadName(metadata.downloadName);
+    } catch (err) {
+      console.warn("Latest filename metadata is unavailable.", err);
+      return "latest_converted.wav";
     }
   }
 
@@ -179,10 +223,14 @@
     setStatus("Downloading the latest converted file...");
 
     try {
-      const response = await fetch(`${latestMirrorPath}?v=${Date.now()}`, {
-        method: "GET",
-        cache: "no-store",
-      });
+      const cacheBuster = Date.now();
+      const [response, downloadName] = await Promise.all([
+        fetch(`${latestMirrorPath}?v=${cacheBuster}`, {
+          method: "GET",
+          cache: "no-store",
+        }),
+        getLatestDownloadName(cacheBuster),
+      ]);
 
       if (!response.ok) {
         if (response.status === 404) {
@@ -192,8 +240,8 @@
       }
 
       const blob = await response.blob();
-      const downloadName = triggerDownload(blob, "latest.wav");
-      setStatus(`Latest file downloaded: ${downloadName}`, "ok");
+      const savedName = triggerNamedDownload(blob, downloadName);
+      setStatus(`Latest file downloaded: ${savedName}`, "ok");
     } catch (err) {
       console.error(err);
       const message =
@@ -232,7 +280,7 @@
       setStatus(`Download started: ${downloadName}. Saving the latest copy...`);
 
       try {
-        await saveLatestConversion(blob);
+        await saveLatestConversion(blob, downloadName);
         progressBar.value = 100;
         progressText.textContent = "100%";
         setStatus(

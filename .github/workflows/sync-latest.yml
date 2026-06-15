@@ -31,6 +31,7 @@ jobs:
         shell: bash
         env:
           STORAGE_URL: https://gogkesmxlfkzjkldmpke.supabase.co/storage/v1/object/latest-conversions/latest.wav
+          STORAGE_INFO_URL: https://gogkesmxlfkzjkldmpke.supabase.co/storage/v1/object/info/latest-conversions/latest.wav
           SUPABASE_PUBLISHABLE_KEY: sb_publishable_bRVpK3E-3OXkAi-IMWvzeA_NELsAN0i
         run: |
           set -euo pipefail
@@ -58,9 +59,35 @@ jobs:
             exit 1
           fi
 
+          info_status="$(
+            curl \
+              --silent \
+              --show-error \
+              --location \
+              --output "${RUNNER_TEMP}/latest-info.json" \
+              --write-out "%{http_code}" \
+              --header "apikey: ${SUPABASE_PUBLISHABLE_KEY}" \
+              --header "Authorization: Bearer ${SUPABASE_PUBLISHABLE_KEY}" \
+              "${STORAGE_INFO_URL}?v=$(date +%s)"
+          )"
+
+          if [[ "${info_status}" != "200" ]]; then
+            echo "Storage metadata download failed with HTTP ${info_status}."
+            exit 1
+          fi
+
+          download_name="$(
+            jq -r '.metadata.downloadName // "latest_converted.wav"' \
+              "${RUNNER_TEMP}/latest-info.json"
+          )"
+
           mkdir -p latest
           mv "${RUNNER_TEMP}/latest.wav" latest/latest.wav
-          git add -- latest/latest.wav
+          jq -n \
+            --arg downloadName "${download_name}" \
+            '{downloadName: $downloadName}' \
+            > latest/metadata.json
+          git add -- latest/latest.wav latest/metadata.json
 
           if git diff --cached --quiet; then
             echo "The GitHub mirror is already current."
