@@ -15,11 +15,15 @@ Live site URL (after Pages deploy finishes):
 
 ## Latest conversion storage
 
-The floating `0` button downloads the most recently converted file from
-Supabase Storage. Each successful conversion uploads to the same
-`latest.wav` object with upsert enabled, so a new recording replaces the
+Each successful conversion uploads to the same `latest.wav` object in
+Supabase Storage with upsert enabled, so a new recording replaces the
 previous one instead of accumulating files.
 
 The Supabase project URL and browser-safe publishable key live in `config.js`.
 Anonymous storage policies are limited to `SELECT`, `INSERT`, and `UPDATE`
 operations on the single `latest.wav` object.
+
+The `sync-latest.yml` workflow mirrors that single object to
+`latest/latest.wav` in this repository every five minutes. The floating `0`
+button downloads the mirrored file from GitHub Pages, keeping downloads on
+the same GitHub domain when other cloud storage domains are blocked.

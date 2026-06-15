@@ -1,0 +1,92 @@
+name: Mirror latest conversion to GitHub Pages
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Download latest conversion
+        id: sync
+        shell: bash
+        env:
+          STORAGE_URL: https://gogkesmxlfkzjkldmpke.supabase.co/storage/v1/object/latest-conversions/latest.wav
+          SUPABASE_PUBLISHABLE_KEY: sb_publishable_bRVpK3E-3OXkAi-IMWvzeA_NELsAN0i
+        run: |
+          set -euo pipefail
+
+          status="$(
+            curl \
+              --silent \
+              --show-error \
+              --location \
+              --output "${RUNNER_TEMP}/latest.wav" \
+              --write-out "%{http_code}" \
+              --header "apikey: ${SUPABASE_PUBLISHABLE_KEY}" \
+              --header "Authorization: Bearer ${SUPABASE_PUBLISHABLE_KEY}" \
+              "${STORAGE_URL}?download=$(date +%s)"
+          )"
+
+          if [[ "${status}" == "400" || "${status}" == "404" ]]; then
+            echo "No latest conversion is available yet."
+            echo "changed=false" >> "${GITHUB_OUTPUT}"
+            exit 0
+          fi
+
+          if [[ "${status}" != "200" ]]; then
+            echo "Storage download failed with HTTP ${status}."
+            exit 1
+          fi
+
+          mkdir -p latest
+          mv "${RUNNER_TEMP}/latest.wav" latest/latest.wav
+          git add -- latest/latest.wav
+
+          if git diff --cached --quiet; then
+            echo "The GitHub mirror is already current."
+            echo "changed=false" >> "${GITHUB_OUTPUT}"
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "Update latest converted audio"
+          git push origin HEAD:main
+          echo "changed=true" >> "${GITHUB_OUTPUT}"
+
+      - name: Setup Pages
+        if: steps.sync.outputs.changed == 'true'
+        uses: actions/configure-pages@v5
+        with:
+          enablement: true
+
+      - name: Upload Pages artifact
+        if: steps.sync.outputs.changed == 'true'
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: "."
+
+      - name: Deploy to GitHub Pages
+        if: steps.sync.outputs.changed == 'true'
+        id: deployment
+        uses: actions/deploy-pages@v4

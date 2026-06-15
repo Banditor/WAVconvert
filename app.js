@@ -8,6 +8,7 @@
   const statusEl = document.getElementById("status");
   const latestDownloadBtn = document.getElementById("latestDownloadBtn");
   const storageConfig = window.WAV_STORAGE_CONFIG || {};
+  const latestMirrorPath = "./latest/latest.wav";
 
   let selectedFile = null;
   let isConverting = false;
@@ -173,39 +174,21 @@
       return;
     }
 
-    const objectUrl = getStorageObjectUrl();
-    if (!objectUrl) {
-      setStatus("Cloud storage is not connected yet.", "error");
-      return;
-    }
-
     isDownloadingLatest = true;
     latestDownloadBtn.disabled = true;
     setStatus("Downloading the latest converted file...");
 
     try {
-      const response = await fetch(`${objectUrl}?download=${Date.now()}`, {
+      const response = await fetch(`${latestMirrorPath}?v=${Date.now()}`, {
         method: "GET",
-        headers: getStorageHeaders(),
         cache: "no-store",
       });
 
       if (!response.ok) {
-        let errorBody = null;
-        try {
-          errorBody = await response.json();
-        } catch {
-          // The status code below still provides a useful fallback.
-        }
-
-        if (
-          response.status === 400 ||
-          response.status === 404 ||
-          String(errorBody?.statusCode) === "404"
-        ) {
+        if (response.status === 404) {
           throw new Error("No converted file has been saved yet");
         }
-        throw new Error(`Cloud download failed with status ${response.status}`);
+        throw new Error(`Latest download failed with status ${response.status}`);
       }
 
       const blob = await response.blob();
@@ -252,7 +235,10 @@
         await saveLatestConversion(blob);
         progressBar.value = 100;
         progressText.textContent = "100%";
-        setStatus(`Done. Latest copy updated: ${downloadName}`, "ok");
+        setStatus(
+          `Done. Latest copy saved: ${downloadName}. Button 0 updates within a few minutes.`,
+          "ok",
+        );
       } catch (storageError) {
         console.error(storageError);
         progressBar.value = 100;
