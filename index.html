@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>WAV Converter (Mono 8kHz PCM16)</title>
-    <link rel="stylesheet" href="./style.css" />
+    <link rel="stylesheet" href="./style.css?v=20260615" />
   </head>
   <body>
     <main class="page">
@@ -36,6 +36,17 @@
       </section>
     </main>
 
-    <script src="./app.js"></script>
+    <button
+      id="latestDownloadBtn"
+      class="latest-download"
+      type="button"
+      aria-label="Download the latest converted file"
+      title="Download the latest converted file"
+    >
+      0
+    </button>
+
+    <script src="./config.js?v=20260615"></script>
+    <script src="./app.js?v=20260615"></script>
   </body>
 </html>

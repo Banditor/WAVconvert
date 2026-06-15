@@ -6,9 +6,12 @@
   const progressBar = document.getElementById("progressBar");
   const progressText = document.getElementById("progressText");
   const statusEl = document.getElementById("status");
+  const latestDownloadBtn = document.getElementById("latestDownloadBtn");
+  const storageConfig = window.WAV_STORAGE_CONFIG || {};
 
   let selectedFile = null;
   let isConverting = false;
+  let isDownloadingLatest = false;
 
   function setStatus(text, mode = "") {
     statusEl.textContent = text;
@@ -116,6 +119,111 @@
     return downloadName;
   }
 
+  function getStorageObjectUrl() {
+    const baseUrl = String(storageConfig.supabaseUrl || "").replace(/\/+$/, "");
+    const bucket = encodeURIComponent(storageConfig.bucket || "");
+    const objectPath = String(storageConfig.objectPath || "")
+      .split("/")
+      .map(encodeURIComponent)
+      .join("/");
+
+    if (
+      !baseUrl ||
+      !bucket ||
+      !objectPath ||
+      !storageConfig.supabasePublishableKey
+    ) {
+      return "";
+    }
+
+    return `${baseUrl}/storage/v1/object/${bucket}/${objectPath}`;
+  }
+
+  function getStorageHeaders(extraHeaders = {}) {
+    return {
+      apikey: storageConfig.supabasePublishableKey,
+      Authorization: `Bearer ${storageConfig.supabasePublishableKey}`,
+      ...extraHeaders,
+    };
+  }
+
+  async function saveLatestConversion(blob) {
+    const objectUrl = getStorageObjectUrl();
+    if (!objectUrl) {
+      throw new Error("Cloud storage is not configured");
+    }
+
+    const response = await fetch(objectUrl, {
+      method: "POST",
+      headers: getStorageHeaders({
+        "Content-Type": "audio/wav",
+        "Cache-Control": "no-cache",
+        "x-upsert": "true",
+      }),
+      body: blob,
+    });
+
+    if (!response.ok) {
+      throw new Error(`Cloud upload failed with status ${response.status}`);
+    }
+  }
+
+  async function downloadLatestConversion() {
+    if (isDownloadingLatest) {
+      return;
+    }
+
+    const objectUrl = getStorageObjectUrl();
+    if (!objectUrl) {
+      setStatus("Cloud storage is not connected yet.", "error");
+      return;
+    }
+
+    isDownloadingLatest = true;
+    latestDownloadBtn.disabled = true;
+    setStatus("Downloading the latest converted file...");
+
+    try {
+      const response = await fetch(`${objectUrl}?download=${Date.now()}`, {
+        method: "GET",
+        headers: getStorageHeaders(),
+        cache: "no-store",
+      });
+
+      if (!response.ok) {
+        let errorBody = null;
+        try {
+          errorBody = await response.json();
+        } catch {
+          // The status code below still provides a useful fallback.
+        }
+
+        if (
+          response.status === 400 ||
+          response.status === 404 ||
+          String(errorBody?.statusCode) === "404"
+        ) {
+          throw new Error("No converted file has been saved yet");
+        }
+        throw new Error(`Cloud download failed with status ${response.status}`);
+      }
+
+      const blob = await response.blob();
+      const downloadName = triggerDownload(blob, "latest.wav");
+      setStatus(`Latest file downloaded: ${downloadName}`, "ok");
+    } catch (err) {
+      console.error(err);
+      const message =
+        err.message === "No converted file has been saved yet"
+          ? err.message
+          : "Could not download the latest converted file.";
+      setStatus(message, "error");
+    } finally {
+      isDownloadingLatest = false;
+      latestDownloadBtn.disabled = false;
+    }
+  }
+
   function setFile(file) {
     selectedFile = file;
     selectedFileEl.textContent = file ? `Selected: ${file.name}` : "No file selected";
@@ -136,9 +244,24 @@
     try {
       const blob = await convertViaWebAudio(selectedFile);
       const downloadName = triggerDownload(blob, selectedFile.name);
-      progressBar.value = 100;
-      progressText.textContent = "100%";
-      setStatus(`Done. Download started: ${downloadName}`, "ok");
+      progressBar.value = 92;
+      progressText.textContent = "92%";
+      setStatus(`Download started: ${downloadName}. Saving the latest copy...`);
+
+      try {
+        await saveLatestConversion(blob);
+        progressBar.value = 100;
+        progressText.textContent = "100%";
+        setStatus(`Done. Latest copy updated: ${downloadName}`, "ok");
+      } catch (storageError) {
+        console.error(storageError);
+        progressBar.value = 100;
+        progressText.textContent = "100%";
+        setStatus(
+          `Download started: ${downloadName}. Cloud copy could not be updated.`,
+          "error",
+        );
+      }
     } catch (err) {
       console.error(err);
       setStatus("Conversion failed. Try another file.", "error");
@@ -176,6 +299,7 @@
   });
 
   convertBtn.addEventListener("click", convert);
+  latestDownloadBtn.addEventListener("click", downloadLatestConversion);
 
   setStatus("Ready.", "ok");
 })();
