@@ -29,8 +29,12 @@ IndexedDB record, replacing it on every new conversion. That makes the floating
 `0` button download the newest file immediately in the same browser after a
 conversion finishes.
 
+When the `0` button runs in another browser, it checks whether the cloud copy is
+newer than the GitHub Pages mirror. If the cloud is reachable, it downloads the
+newest copy immediately. If that cloud domain is blocked, the button avoids
+downloading a known-stale GitHub copy and waits for the mirror to catch up.
+
 The `sync-latest.yml` workflow mirrors the same Supabase object to
 `latest/latest.wav` and its metadata to `latest/metadata.json` in this
-repository every five minutes. Other browsers and computers use the mirrored
-file from GitHub Pages with the preserved name, keeping downloads on the same
-GitHub domain when other cloud storage domains are blocked.
+repository every five minutes. The mirrored copy keeps normal downloads on the
+same GitHub domain when other cloud storage domains are blocked.

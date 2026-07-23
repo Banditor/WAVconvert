@@ -204,6 +204,7 @@
           blob: record.blob,
           downloadName: safeDownloadName(record.downloadName),
           savedAt: Number(record.savedAt) || 0,
+          source: "persisted",
         };
 
         return latestLocalConversion;
@@ -224,6 +225,7 @@
     };
 
     latestLocalConversion = record;
+    latestLocalConversion.source = "current-page";
     localLatestLoaded = true;
 
     try {
@@ -257,6 +259,18 @@
     return record;
   }
 
+  function shouldUseLocalLatest(localLatest, latestMetadata) {
+    if (!localLatest) {
+      return false;
+    }
+
+    if (latestMetadata.savedAt > 0) {
+      return localLatest.savedAt >= latestMetadata.savedAt;
+    }
+
+    return localLatest.source === "current-page";
+  }
+
   function getStorageObjectUrl() {
     const baseUrl = String(storageConfig.supabaseUrl || "").replace(/\/+$/, "");
     const bucket = encodeURIComponent(storageConfig.bucket || "");
@@ -277,12 +291,37 @@
     return `${baseUrl}/storage/v1/object/${bucket}/${objectPath}`;
   }
 
+  function getStorageObjectInfoUrl() {
+    const objectUrl = getStorageObjectUrl();
+    return objectUrl
+      ? objectUrl.replace("/storage/v1/object/", "/storage/v1/object/info/")
+      : "";
+  }
+
   function getStorageHeaders(extraHeaders = {}) {
     return {
       apikey: storageConfig.supabasePublishableKey,
       Authorization: `Bearer ${storageConfig.supabasePublishableKey}`,
       ...extraHeaders,
     };
+  }
+
+  async function fetchWithTimeout(url, options = {}, timeoutMs = 5000) {
+    if (!window.AbortController) {
+      return fetch(url, options);
+    }
+
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
+
+    try {
+      return await fetch(url, {
+        ...options,
+        signal: controller.signal,
+      });
+    } finally {
+      window.clearTimeout(timeoutId);
+    }
   }
 
   async function saveLatestConversion(blob, downloadName, savedAt) {
@@ -346,6 +385,61 @@
     }
   }
 
+  async function getCloudLatestMetadata(cacheBuster) {
+    const infoUrl = getStorageObjectInfoUrl();
+    if (!infoUrl) {
+      return null;
+    }
+
+    try {
+      const response = await fetchWithTimeout(
+        `${infoUrl}?v=${cacheBuster}`,
+        {
+          method: "GET",
+          headers: getStorageHeaders(),
+          cache: "no-store",
+        },
+        3000,
+      );
+
+      if (!response.ok) {
+        return null;
+      }
+
+      const info = await response.json();
+      return {
+        downloadName: safeDownloadName(info.metadata?.downloadName),
+        savedAt: Number(info.metadata?.savedAt) || 0,
+      };
+    } catch (err) {
+      console.warn("Cloud latest metadata is unavailable.", err);
+      return null;
+    }
+  }
+
+  async function getCloudLatestBlob(cacheBuster) {
+    const objectUrl = getStorageObjectUrl();
+    if (!objectUrl) {
+      throw new Error("Cloud storage is not configured");
+    }
+
+    const response = await fetchWithTimeout(
+      `${objectUrl}?download=${cacheBuster}`,
+      {
+        method: "GET",
+        headers: getStorageHeaders(),
+        cache: "no-store",
+      },
+      12000,
+    );
+
+    if (!response.ok) {
+      throw new Error(`Cloud latest download failed with status ${response.status}`);
+    }
+
+    return response.blob();
+  }
+
   async function downloadLatestConversion() {
     if (isDownloadingLatest) {
       return;
@@ -357,21 +451,35 @@
 
     try {
       const cacheBuster = Date.now();
-      const [localLatest, latestMetadata] = await Promise.all([
+      const [localLatest, latestMetadata, cloudMetadata] = await Promise.all([
         readLocalLatestConversion(),
         getLatestMetadata(cacheBuster),
+        getCloudLatestMetadata(cacheBuster),
       ]);
+      const newestKnownMetadata =
+        cloudMetadata && cloudMetadata.savedAt > latestMetadata.savedAt
+          ? cloudMetadata
+          : latestMetadata;
 
-      if (
-        localLatest &&
-        localLatest.savedAt >= latestMetadata.savedAt
-      ) {
+      if (shouldUseLocalLatest(localLatest, newestKnownMetadata)) {
         const savedName = triggerNamedDownload(
           localLatest.blob,
           localLatest.downloadName,
         );
         setStatus(`Latest file downloaded: ${savedName}`, "ok");
         return;
+      }
+
+      if (cloudMetadata && cloudMetadata.savedAt > latestMetadata.savedAt) {
+        try {
+          const blob = await getCloudLatestBlob(cacheBuster);
+          const savedName = triggerNamedDownload(blob, cloudMetadata.downloadName);
+          setStatus(`Latest file downloaded: ${savedName}`, "ok");
+          return;
+        } catch (cloudDownloadError) {
+          console.warn("Cloud latest copy is newer but unreachable.", cloudDownloadError);
+          throw new Error("Latest GitHub copy is still updating");
+        }
       }
 
       const response = await fetch(`${latestMirrorPath}?v=${cacheBuster}`, {
@@ -394,6 +502,8 @@
       const message =
         err.message === "No converted file has been saved yet"
           ? err.message
+          : err.message === "Latest GitHub copy is still updating"
+            ? "The latest file is saved, but GitHub is still updating. Try again in a few minutes."
           : "Could not download the latest converted file.";
       setStatus(message, "error");
     } finally {
