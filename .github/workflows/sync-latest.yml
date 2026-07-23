@@ -80,12 +80,17 @@ jobs:
             jq -r '.metadata.downloadName // "latest_converted.wav"' \
               "${RUNNER_TEMP}/latest-info.json"
           )"
+          saved_at="$(
+            jq -r '(.metadata.savedAt // 0) | tonumber? // 0' \
+              "${RUNNER_TEMP}/latest-info.json"
+          )"
 
           mkdir -p latest
           mv "${RUNNER_TEMP}/latest.wav" latest/latest.wav
           jq -n \
             --arg downloadName "${download_name}" \
-            '{downloadName: $downloadName}' \
+            --argjson savedAt "${saved_at}" \
+            '{downloadName: $downloadName, savedAt: $savedAt}' \
             > latest/metadata.json
           git add -- latest/latest.wav latest/metadata.json
 

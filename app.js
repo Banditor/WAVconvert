@@ -10,10 +10,15 @@
   const storageConfig = window.WAV_STORAGE_CONFIG || {};
   const latestMirrorPath = "./latest/latest.wav";
   const latestMetadataPath = "./latest/metadata.json";
+  const localLatestDbName = "wav-converter-latest";
+  const localLatestStoreName = "latest";
+  const localLatestRecordKey = "current";
 
   let selectedFile = null;
   let isConverting = false;
   let isDownloadingLatest = false;
+  let latestLocalConversion = null;
+  let localLatestLoaded = false;
 
   function setStatus(text, mode = "") {
     statusEl.textContent = text;
@@ -136,6 +141,122 @@
     return triggerNamedDownload(blob, `${stem}_converted.wav`);
   }
 
+  function openLocalLatestDb() {
+    if (!window.indexedDB) {
+      return Promise.resolve(null);
+    }
+
+    return new Promise((resolve, reject) => {
+      const request = window.indexedDB.open(localLatestDbName, 1);
+
+      request.onupgradeneeded = () => {
+        const db = request.result;
+        if (!db.objectStoreNames.contains(localLatestStoreName)) {
+          db.createObjectStore(localLatestStoreName);
+        }
+      };
+
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => {
+        reject(request.error || new Error("Could not open local latest cache"));
+      };
+      request.onblocked = () => {
+        reject(new Error("Local latest cache is blocked"));
+      };
+    });
+  }
+
+  async function readLocalLatestConversion() {
+    if (latestLocalConversion) {
+      return latestLocalConversion;
+    }
+
+    if (localLatestLoaded) {
+      return null;
+    }
+
+    localLatestLoaded = true;
+
+    try {
+      const db = await openLocalLatestDb();
+      if (!db) {
+        return null;
+      }
+
+      try {
+        const record = await new Promise((resolve, reject) => {
+          const transaction = db.transaction(localLatestStoreName, "readonly");
+          const request = transaction
+            .objectStore(localLatestStoreName)
+            .get(localLatestRecordKey);
+
+          request.onsuccess = () => resolve(request.result || null);
+          request.onerror = () => {
+            reject(request.error || new Error("Could not read local latest"));
+          };
+        });
+
+        if (!(record?.blob instanceof Blob)) {
+          return null;
+        }
+
+        latestLocalConversion = {
+          blob: record.blob,
+          downloadName: safeDownloadName(record.downloadName),
+          savedAt: Number(record.savedAt) || 0,
+        };
+
+        return latestLocalConversion;
+      } finally {
+        db.close();
+      }
+    } catch (err) {
+      console.warn("Local latest copy is unavailable.", err);
+      return null;
+    }
+  }
+
+  async function saveLocalLatestConversion(blob, downloadName, savedAt) {
+    const record = {
+      blob,
+      downloadName: safeDownloadName(downloadName),
+      savedAt,
+    };
+
+    latestLocalConversion = record;
+    localLatestLoaded = true;
+
+    try {
+      const db = await openLocalLatestDb();
+      if (!db) {
+        return record;
+      }
+
+      try {
+        await new Promise((resolve, reject) => {
+          const transaction = db.transaction(localLatestStoreName, "readwrite");
+          transaction
+            .objectStore(localLatestStoreName)
+            .put(record, localLatestRecordKey);
+
+          transaction.oncomplete = () => resolve();
+          transaction.onerror = () => {
+            reject(transaction.error || new Error("Could not save local latest"));
+          };
+          transaction.onabort = () => {
+            reject(transaction.error || new Error("Local latest save aborted"));
+          };
+        });
+      } finally {
+        db.close();
+      }
+    } catch (err) {
+      console.warn("Could not persist the local latest copy.", err);
+    }
+
+    return record;
+  }
+
   function getStorageObjectUrl() {
     const baseUrl = String(storageConfig.supabaseUrl || "").replace(/\/+$/, "");
     const bucket = encodeURIComponent(storageConfig.bucket || "");
@@ -164,7 +285,7 @@
     };
   }
 
-  async function saveLatestConversion(blob, downloadName) {
+  async function saveLatestConversion(blob, downloadName, savedAt) {
     const objectUrl = getStorageObjectUrl();
     if (!objectUrl) {
       throw new Error("Cloud storage is not configured");
@@ -174,7 +295,10 @@
     formData.append("cacheControl", "0");
     formData.append(
       "metadata",
-      JSON.stringify({ downloadName: safeDownloadName(downloadName) }),
+      JSON.stringify({
+        downloadName: safeDownloadName(downloadName),
+        savedAt,
+      }),
     );
     formData.append("", blob, storageConfig.objectPath || "latest.wav");
 
@@ -191,7 +315,7 @@
     }
   }
 
-  async function getLatestDownloadName(cacheBuster) {
+  async function getLatestMetadata(cacheBuster) {
     try {
       const response = await fetch(
         `${latestMetadataPath}?v=${cacheBuster}`,
@@ -202,14 +326,23 @@
       );
 
       if (!response.ok) {
-        return "latest_converted.wav";
+        return {
+          downloadName: "latest_converted.wav",
+          savedAt: 0,
+        };
       }
 
       const metadata = await response.json();
-      return safeDownloadName(metadata.downloadName);
+      return {
+        downloadName: safeDownloadName(metadata.downloadName),
+        savedAt: Number(metadata.savedAt) || 0,
+      };
     } catch (err) {
       console.warn("Latest filename metadata is unavailable.", err);
-      return "latest_converted.wav";
+      return {
+        downloadName: "latest_converted.wav",
+        savedAt: 0,
+      };
     }
   }
 
@@ -224,13 +357,27 @@
 
     try {
       const cacheBuster = Date.now();
-      const [response, downloadName] = await Promise.all([
-        fetch(`${latestMirrorPath}?v=${cacheBuster}`, {
-          method: "GET",
-          cache: "no-store",
-        }),
-        getLatestDownloadName(cacheBuster),
+      const [localLatest, latestMetadata] = await Promise.all([
+        readLocalLatestConversion(),
+        getLatestMetadata(cacheBuster),
       ]);
+
+      if (
+        localLatest &&
+        localLatest.savedAt >= latestMetadata.savedAt
+      ) {
+        const savedName = triggerNamedDownload(
+          localLatest.blob,
+          localLatest.downloadName,
+        );
+        setStatus(`Latest file downloaded: ${savedName}`, "ok");
+        return;
+      }
+
+      const response = await fetch(`${latestMirrorPath}?v=${cacheBuster}`, {
+        method: "GET",
+        cache: "no-store",
+      });
 
       if (!response.ok) {
         if (response.status === 404) {
@@ -240,7 +387,7 @@
       }
 
       const blob = await response.blob();
-      const savedName = triggerNamedDownload(blob, downloadName);
+      const savedName = triggerNamedDownload(blob, latestMetadata.downloadName);
       setStatus(`Latest file downloaded: ${savedName}`, "ok");
     } catch (err) {
       console.error(err);
@@ -274,17 +421,21 @@
 
     try {
       const blob = await convertViaWebAudio(selectedFile);
+      const savedAt = Date.now();
       const downloadName = triggerDownload(blob, selectedFile.name);
+      await saveLocalLatestConversion(blob, downloadName, savedAt);
       progressBar.value = 92;
       progressText.textContent = "92%";
-      setStatus(`Download started: ${downloadName}. Saving the latest copy...`);
+      setStatus(
+        `Download started: ${downloadName}. Button 0 is ready now. Saving the cloud copy...`,
+      );
 
       try {
-        await saveLatestConversion(blob, downloadName);
+        await saveLatestConversion(blob, downloadName, savedAt);
         progressBar.value = 100;
         progressText.textContent = "100%";
         setStatus(
-          `Done. Latest copy saved: ${downloadName}. Button 0 updates within a few minutes.`,
+          `Done. Latest copy saved: ${downloadName}. Button 0 is ready now.`,
           "ok",
         );
       } catch (storageError) {
@@ -292,7 +443,7 @@
         progressBar.value = 100;
         progressText.textContent = "100%";
         setStatus(
-          `Download started: ${downloadName}. Cloud copy could not be updated.`,
+          `Download started: ${downloadName}. Button 0 is ready now, but the cloud copy could not be updated.`,
           "error",
         );
       }

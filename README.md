@@ -24,8 +24,13 @@ The Supabase project URL and browser-safe publishable key live in `config.js`.
 Anonymous storage policies are limited to `SELECT`, `INSERT`, and `UPDATE`
 operations on the single `latest.wav` object.
 
-The `sync-latest.yml` workflow mirrors that single object to
-`latest/latest.wav` and its download name to `latest/metadata.json` in this
-repository every five minutes. The floating `0` button downloads the mirrored
-file with the preserved name from GitHub Pages, keeping downloads on the same
+The browser also keeps the most recent converted WAV in a single local
+IndexedDB record, replacing it on every new conversion. That makes the floating
+`0` button download the newest file immediately in the same browser after a
+conversion finishes.
+
+The `sync-latest.yml` workflow mirrors the same Supabase object to
+`latest/latest.wav` and its metadata to `latest/metadata.json` in this
+repository every five minutes. Other browsers and computers use the mirrored
+file from GitHub Pages with the preserved name, keeping downloads on the same
 GitHub domain when other cloud storage domains are blocked.
