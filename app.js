@@ -10,6 +10,11 @@
   const storageConfig = window.WAV_STORAGE_CONFIG || {};
   const latestMirrorPath = "./latest/latest.wav";
   const latestMetadataPath = "./latest/metadata.json";
+  const latestRawFileUrl =
+    "https://raw.githubusercontent.com/Banditor/WAVconvert/main/latest/latest.wav";
+  const latestRawMetadataUrl =
+    "https://raw.githubusercontent.com/Banditor/WAVconvert/main/latest/metadata.json";
+  const latestMirrorFunctionName = "mirror-latest";
   const localLatestDbName = "wav-converter-latest";
   const localLatestStoreName = "latest";
   const localLatestRecordKey = "current";
@@ -298,6 +303,13 @@
       : "";
   }
 
+  function getLatestMirrorFunctionUrl() {
+    const baseUrl = String(storageConfig.supabaseUrl || "").replace(/\/+$/, "");
+    return baseUrl
+      ? `${baseUrl}/functions/v1/${latestMirrorFunctionName}`
+      : "";
+  }
+
   function getStorageHeaders(extraHeaders = {}) {
     return {
       apikey: storageConfig.supabasePublishableKey,
@@ -398,6 +410,55 @@
     );
   }
 
+  async function mirrorLatestConversion(downloadName, savedAt) {
+    const functionUrl = getLatestMirrorFunctionUrl();
+    if (!functionUrl) {
+      return null;
+    }
+
+    const response = await fetchWithTimeout(
+      functionUrl,
+      {
+        method: "POST",
+        headers: getStorageHeaders({
+          "Content-Type": "application/json",
+        }),
+        body: JSON.stringify({
+          downloadName: safeDownloadName(downloadName),
+          savedAt,
+        }),
+      },
+      20000,
+    );
+
+    if (!response.ok) {
+      const errorText = await readStorageError(response);
+      throw new Error(`Latest mirror failed: ${errorText}`);
+    }
+
+    return response.json().catch(() => null);
+  }
+
+  function normalizeLatestMetadata(metadata, source) {
+    return {
+      downloadName: safeDownloadName(metadata?.downloadName),
+      savedAt: Number(metadata?.savedAt) || 0,
+      source,
+    };
+  }
+
+  function newestMetadata(...metadataList) {
+    return metadataList.reduce(
+      (newest, metadata) =>
+        metadata && metadata.savedAt > newest.savedAt ? metadata : newest,
+      {
+        downloadName: "latest_converted.wav",
+        savedAt: 0,
+        source: "none",
+      },
+    );
+  }
+
   async function getLatestMetadata(cacheBuster) {
     try {
       const response = await fetch(
@@ -412,20 +473,42 @@
         return {
           downloadName: "latest_converted.wav",
           savedAt: 0,
+          source: "pages",
         };
       }
 
       const metadata = await response.json();
-      return {
-        downloadName: safeDownloadName(metadata.downloadName),
-        savedAt: Number(metadata.savedAt) || 0,
-      };
+      return normalizeLatestMetadata(metadata, "pages");
     } catch (err) {
       console.warn("Latest filename metadata is unavailable.", err);
       return {
         downloadName: "latest_converted.wav",
         savedAt: 0,
+        source: "pages",
       };
+    }
+  }
+
+  async function getRawLatestMetadata(cacheBuster) {
+    try {
+      const response = await fetchWithTimeout(
+        `${latestRawMetadataUrl}?v=${cacheBuster}`,
+        {
+          method: "GET",
+          cache: "no-store",
+        },
+        3000,
+      );
+
+      if (!response.ok) {
+        return null;
+      }
+
+      const metadata = await response.json();
+      return normalizeLatestMetadata(metadata, "raw");
+    } catch (err) {
+      console.warn("GitHub raw latest metadata is unavailable.", err);
+      return null;
     }
   }
 
@@ -451,10 +534,7 @@
       }
 
       const info = await response.json();
-      return {
-        downloadName: safeDownloadName(info.metadata?.downloadName),
-        savedAt: Number(info.metadata?.savedAt) || 0,
-      };
+      return normalizeLatestMetadata(info.metadata, "cloud");
     } catch (err) {
       console.warn("Cloud latest metadata is unavailable.", err);
       return null;
@@ -484,6 +564,23 @@
     return response.blob();
   }
 
+  async function getRawLatestBlob(cacheBuster) {
+    const response = await fetchWithTimeout(
+      `${latestRawFileUrl}?download=${cacheBuster}`,
+      {
+        method: "GET",
+        cache: "no-store",
+      },
+      12000,
+    );
+
+    if (!response.ok) {
+      throw new Error(`GitHub raw latest download failed with status ${response.status}`);
+    }
+
+    return response.blob();
+  }
+
   async function downloadLatestConversion() {
     if (isDownloadingLatest) {
       return;
@@ -495,15 +592,22 @@
 
     try {
       const cacheBuster = Date.now();
-      const [localLatest, latestMetadata, cloudMetadata] = await Promise.all([
+      const [
+        localLatest,
+        latestMetadata,
+        rawMetadata,
+        cloudMetadata,
+      ] = await Promise.all([
         readLocalLatestConversion(),
         getLatestMetadata(cacheBuster),
+        getRawLatestMetadata(cacheBuster),
         getCloudLatestMetadata(cacheBuster),
       ]);
-      const newestKnownMetadata =
-        cloudMetadata && cloudMetadata.savedAt > latestMetadata.savedAt
-          ? cloudMetadata
-          : latestMetadata;
+      const newestKnownMetadata = newestMetadata(
+        latestMetadata,
+        rawMetadata,
+        cloudMetadata,
+      );
 
       if (shouldUseLocalLatest(localLatest, newestKnownMetadata)) {
         const savedName = triggerNamedDownload(
@@ -514,14 +618,38 @@
         return;
       }
 
-      if (cloudMetadata && cloudMetadata.savedAt > latestMetadata.savedAt) {
+      if (newestKnownMetadata.source === "raw") {
+        try {
+          const blob = await getRawLatestBlob(cacheBuster);
+          const savedName = triggerNamedDownload(
+            blob,
+            newestKnownMetadata.downloadName,
+          );
+          setStatus(`Latest file downloaded: ${savedName}`, "ok");
+          return;
+        } catch (rawDownloadError) {
+          console.warn("GitHub raw latest copy is unavailable.", rawDownloadError);
+          throw new Error("Latest GitHub copy is still updating");
+        }
+      }
+
+      if (newestKnownMetadata.source === "cloud") {
         try {
           const blob = await getCloudLatestBlob(cacheBuster);
-          const savedName = triggerNamedDownload(blob, cloudMetadata.downloadName);
+          const savedName = triggerNamedDownload(
+            blob,
+            newestKnownMetadata.downloadName,
+          );
           setStatus(`Latest file downloaded: ${savedName}`, "ok");
           return;
         } catch (cloudDownloadError) {
           console.warn("Cloud latest copy is newer but unreachable.", cloudDownloadError);
+          if (rawMetadata && rawMetadata.savedAt >= newestKnownMetadata.savedAt) {
+            const blob = await getRawLatestBlob(cacheBuster);
+            const savedName = triggerNamedDownload(blob, rawMetadata.downloadName);
+            setStatus(`Latest file downloaded: ${savedName}`, "ok");
+            return;
+          }
           throw new Error("Latest GitHub copy is still updating");
         }
       }
@@ -586,10 +714,19 @@
 
       try {
         await saveLatestConversion(blob, downloadName, savedAt);
+        let mirrorResult = null;
+        try {
+          mirrorResult = await mirrorLatestConversion(downloadName, savedAt);
+        } catch (mirrorError) {
+          console.warn("Latest GitHub mirror could not be updated immediately.", mirrorError);
+        }
         progressBar.value = 100;
         progressText.textContent = "100%";
+        const mirrorMessage = mirrorResult?.ok
+          ? " Other devices can download it now."
+          : " Other devices will update from GitHub shortly.";
         setStatus(
-          `Done. Latest copy saved: ${downloadName}. Button 0 is ready now.`,
+          `Done. Latest copy saved: ${downloadName}. Button 0 is ready now.${mirrorMessage}`,
           "ok",
         );
       } catch (storageError) {

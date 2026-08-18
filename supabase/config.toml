@@ -1,0 +1,4 @@
+project_id = "gogkesmxlfkzjkldmpke"
+
+[functions.mirror-latest]
+verify_jwt = false

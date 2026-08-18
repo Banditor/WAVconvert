@@ -29,12 +29,31 @@ IndexedDB record, replacing it on every new conversion. That makes the floating
 `0` button download the newest file immediately in the same browser after a
 conversion finishes.
 
-When the `0` button runs in another browser, it checks whether the cloud copy is
-newer than the GitHub Pages mirror. If the cloud is reachable, it downloads the
-newest copy immediately. If that cloud domain is blocked, the button avoids
-downloading a known-stale GitHub copy and waits for the mirror to catch up.
+When the `0` button runs in another browser, it checks the cloud copy, the
+GitHub Pages mirror, and the raw file on `raw.githubusercontent.com`. After a
+successful cloud upload, the browser invokes the `mirror-latest` Supabase Edge
+Function, which commits the latest WAV and metadata to GitHub immediately. That
+lets other devices download the newest file from GitHub Raw without waiting for
+the GitHub Pages deployment queue.
 
 The `sync-latest.yml` workflow mirrors the same Supabase object to
 `latest/latest.wav` and its metadata to `latest/metadata.json` in this
-repository every five minutes. The mirrored copy keeps normal downloads on the
-same GitHub domain when other cloud storage domains are blocked.
+repository every five minutes as a scheduled fallback. The mirrored copy keeps
+normal downloads on the same GitHub domain when other cloud storage domains are
+blocked.
+
+## Supabase Edge Function
+
+The `mirror-latest` function lives at `supabase/functions/mirror-latest`. It
+reads the single latest object from Supabase Storage and commits these two files
+to the repository in one Git commit:
+
+- `latest/latest.wav`
+- `latest/metadata.json`
+
+Deploy it with Supabase CLI after setting a GitHub token secret:
+
+```sh
+npx supabase secrets set GITHUB_TOKEN=<github-token> --project-ref gogkesmxlfkzjkldmpke
+npx supabase functions deploy mirror-latest --project-ref gogkesmxlfkzjkldmpke --no-verify-jwt
+```
