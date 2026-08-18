@@ -324,7 +324,27 @@
     }
   }
 
-  async function saveLatestConversion(blob, downloadName, savedAt) {
+  function wait(ms) {
+    return new Promise((resolve) => {
+      window.setTimeout(resolve, ms);
+    });
+  }
+
+  async function readStorageError(response) {
+    const text = await response.text().catch(() => "");
+    if (!text) {
+      return `HTTP ${response.status}`;
+    }
+
+    try {
+      const error = JSON.parse(text);
+      return error.message || error.error || text;
+    } catch (_err) {
+      return text;
+    }
+  }
+
+  async function uploadLatestConversion(blob, downloadName, savedAt, method) {
     const objectUrl = getStorageObjectUrl();
     if (!objectUrl) {
       throw new Error("Cloud storage is not configured");
@@ -342,16 +362,40 @@
     formData.append("", blob, storageConfig.objectPath || "latest.wav");
 
     const response = await fetch(objectUrl, {
-      method: "POST",
+      method,
       headers: getStorageHeaders({
-        "x-upsert": "true",
+        ...(method === "POST" ? { "x-upsert": "true" } : {}),
       }),
       body: formData,
     });
 
     if (!response.ok) {
-      throw new Error(`Cloud upload failed with status ${response.status}`);
+      const errorText = await readStorageError(response);
+      throw new Error(`${method} failed: ${errorText}`);
     }
+  }
+
+  async function saveLatestConversion(blob, downloadName, savedAt) {
+    const errors = [];
+
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      for (const method of ["POST", "PUT"]) {
+        try {
+          await uploadLatestConversion(blob, downloadName, savedAt, method);
+          return;
+        } catch (err) {
+          errors.push(err.message || String(err));
+        }
+      }
+
+      if (attempt < 2) {
+        await wait(500 * (attempt + 1));
+      }
+    }
+
+    throw new Error(
+      `Cloud upload failed after retries: ${errors[errors.length - 1]}`,
+    );
   }
 
   async function getLatestMetadata(cacheBuster) {
