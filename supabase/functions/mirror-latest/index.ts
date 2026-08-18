@@ -5,12 +5,11 @@ const corsHeaders = {
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
-const supabaseUrl =
-  Deno.env.get("SUPABASE_URL") || "https://gogkesmxlfkzjkldmpke.supabase.co";
-const supabaseKey =
-  Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ||
-  Deno.env.get("SUPABASE_ANON_KEY") ||
-  Deno.env.get("SUPABASE_PUBLISHABLE_KEY") ||
+const sourceSupabaseUrl =
+  Deno.env.get("LATEST_SOURCE_SUPABASE_URL") ||
+  "https://gogkesmxlfkzjkldmpke.supabase.co";
+const sourceSupabaseKey =
+  Deno.env.get("LATEST_SOURCE_SUPABASE_KEY") ||
   "sb_publishable_bRVpK3E-3OXkAi-IMWvzeA_NELsAN0i";
 const githubToken = Deno.env.get("GITHUB_TOKEN") || "";
 const githubRepo = Deno.env.get("GITHUB_REPO") || "Banditor/WAVconvert";
@@ -44,8 +43,8 @@ function safeDownloadName(name: unknown) {
 
 function storageHeaders() {
   return {
-    apikey: supabaseKey,
-    Authorization: `Bearer ${supabaseKey}`,
+    apikey: sourceSupabaseKey,
+    Authorization: `Bearer ${sourceSupabaseKey}`,
   };
 }
 
@@ -94,9 +93,9 @@ async function fetchCurrentStorageObject() {
     .map(encodeURIComponent)
     .join("/");
   const objectUrl =
-    `${supabaseUrl}/storage/v1/object/${encodedBucket}/${encodedPath}`;
+    `${sourceSupabaseUrl}/storage/v1/object/${encodedBucket}/${encodedPath}`;
   const infoUrl =
-    `${supabaseUrl}/storage/v1/object/info/${encodedBucket}/${encodedPath}`;
+    `${sourceSupabaseUrl}/storage/v1/object/info/${encodedBucket}/${encodedPath}`;
   const cacheBuster = Date.now();
 
   const [infoResponse, fileResponse] = await Promise.all([

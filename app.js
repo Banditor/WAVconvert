@@ -304,6 +304,11 @@
   }
 
   function getLatestMirrorFunctionUrl() {
+    const configuredUrl = String(storageConfig.mirrorFunctionUrl || "").trim();
+    if (configuredUrl) {
+      return configuredUrl;
+    }
+
     const baseUrl = String(storageConfig.supabaseUrl || "").replace(/\/+$/, "");
     return baseUrl
       ? `${baseUrl}/functions/v1/${latestMirrorFunctionName}`

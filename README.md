@@ -45,8 +45,9 @@ blocked.
 ## Supabase Edge Function
 
 The `mirror-latest` function lives at `supabase/functions/mirror-latest`. It
-reads the single latest object from Supabase Storage and commits these two files
-to the repository in one Git commit:
+runs in the accessible Supabase project `hllmzrddzygymsezlzlv`, reads the
+single latest object from the storage project configured in the function, and
+commits these two files to the repository in one Git commit:
 
 - `latest/latest.wav`
 - `latest/metadata.json`
@@ -54,6 +55,6 @@ to the repository in one Git commit:
 Deploy it with Supabase CLI after setting a GitHub token secret:
 
 ```sh
-npx supabase secrets set GITHUB_TOKEN=<github-token> --project-ref gogkesmxlfkzjkldmpke
-npx supabase functions deploy mirror-latest --project-ref gogkesmxlfkzjkldmpke --no-verify-jwt
+npx supabase secrets set GITHUB_TOKEN=<github-token> --project-ref hllmzrddzygymsezlzlv
+npx supabase functions deploy mirror-latest --project-ref hllmzrddzygymsezlzlv --no-verify-jwt
 ```
