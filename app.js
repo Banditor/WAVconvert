@@ -14,6 +14,11 @@
     "https://raw.githubusercontent.com/Banditor/WAVconvert/main/latest/latest.wav";
   const latestRawMetadataUrl =
     "https://raw.githubusercontent.com/Banditor/WAVconvert/main/latest/metadata.json";
+  const latestGitHubApiBaseUrl =
+    "https://api.github.com/repos/Banditor/WAVconvert/contents";
+  const latestGitHubRef = "main";
+  const latestGitHubApiFilePath = "latest/latest.wav";
+  const latestGitHubApiMetadataPath = "latest/metadata.json";
   const latestMirrorFunctionName = "mirror-latest";
   const localLatestDbName = "wav-converter-latest";
   const localLatestStoreName = "latest";
@@ -315,6 +320,30 @@
       : "";
   }
 
+  function getGitHubApiContentUrl(path, cacheBuster) {
+    const encodedPath = String(path)
+      .split("/")
+      .map(encodeURIComponent)
+      .join("/");
+    const ref = encodeURIComponent(latestGitHubRef);
+    return `${latestGitHubApiBaseUrl}/${encodedPath}?ref=${ref}&v=${cacheBuster}`;
+  }
+
+  function decodeBase64ToBytes(base64Text) {
+    const binary = window.atob(String(base64Text || "").replace(/\s/g, ""));
+    const bytes = new Uint8Array(binary.length);
+
+    for (let i = 0; i < binary.length; i += 1) {
+      bytes[i] = binary.charCodeAt(i);
+    }
+
+    return bytes;
+  }
+
+  function decodeBase64ToText(base64Text) {
+    return new TextDecoder().decode(decodeBase64ToBytes(base64Text));
+  }
+
   function getStorageHeaders(extraHeaders = {}) {
     return {
       apikey: storageConfig.supabasePublishableKey,
@@ -425,9 +454,9 @@
       functionUrl,
       {
         method: "POST",
-        headers: getStorageHeaders({
+        headers: {
           "Content-Type": "application/json",
-        }),
+        },
         body: JSON.stringify({
           downloadName: safeDownloadName(downloadName),
           savedAt,
@@ -517,6 +546,46 @@
     }
   }
 
+  async function getGitHubApiFile(path, cacheBuster, timeoutMs) {
+    const response = await fetchWithTimeout(
+      getGitHubApiContentUrl(path, cacheBuster),
+      {
+        method: "GET",
+        headers: {
+          Accept: "application/vnd.github+json",
+        },
+        cache: "no-store",
+      },
+      timeoutMs,
+    );
+
+    if (!response.ok) {
+      throw new Error(`GitHub API content failed with status ${response.status}`);
+    }
+
+    const file = await response.json();
+    if (file.type !== "file" || !file.content) {
+      throw new Error("GitHub API content did not include a file body");
+    }
+
+    return file;
+  }
+
+  async function getGitHubApiLatestMetadata(cacheBuster) {
+    try {
+      const file = await getGitHubApiFile(
+        latestGitHubApiMetadataPath,
+        cacheBuster,
+        4000,
+      );
+      const metadata = JSON.parse(decodeBase64ToText(file.content));
+      return normalizeLatestMetadata(metadata, "github-api");
+    } catch (err) {
+      console.warn("GitHub API latest metadata is unavailable.", err);
+      return null;
+    }
+  }
+
   async function getCloudLatestMetadata(cacheBuster) {
     const infoUrl = getStorageObjectInfoUrl();
     if (!infoUrl) {
@@ -586,6 +655,17 @@
     return response.blob();
   }
 
+  async function getGitHubApiLatestBlob(cacheBuster) {
+    const file = await getGitHubApiFile(
+      latestGitHubApiFilePath,
+      cacheBuster,
+      12000,
+    );
+    return new Blob([decodeBase64ToBytes(file.content)], {
+      type: "audio/wav",
+    });
+  }
+
   async function downloadLatestConversion() {
     if (isDownloadingLatest) {
       return;
@@ -600,16 +680,19 @@
       const [
         localLatest,
         latestMetadata,
+        githubApiMetadata,
         rawMetadata,
         cloudMetadata,
       ] = await Promise.all([
         readLocalLatestConversion(),
         getLatestMetadata(cacheBuster),
+        getGitHubApiLatestMetadata(cacheBuster),
         getRawLatestMetadata(cacheBuster),
         getCloudLatestMetadata(cacheBuster),
       ]);
       const newestKnownMetadata = newestMetadata(
         latestMetadata,
+        githubApiMetadata,
         rawMetadata,
         cloudMetadata,
       );
@@ -638,6 +721,27 @@
         }
       }
 
+      if (newestKnownMetadata.source === "github-api") {
+        try {
+          const blob = await getGitHubApiLatestBlob(cacheBuster);
+          const savedName = triggerNamedDownload(
+            blob,
+            newestKnownMetadata.downloadName,
+          );
+          setStatus(`Latest file downloaded: ${savedName}`, "ok");
+          return;
+        } catch (apiDownloadError) {
+          console.warn("GitHub API latest copy is unavailable.", apiDownloadError);
+          if (rawMetadata && rawMetadata.savedAt >= newestKnownMetadata.savedAt) {
+            const blob = await getRawLatestBlob(cacheBuster);
+            const savedName = triggerNamedDownload(blob, rawMetadata.downloadName);
+            setStatus(`Latest file downloaded: ${savedName}`, "ok");
+            return;
+          }
+          throw new Error("Latest GitHub copy is still updating");
+        }
+      }
+
       if (newestKnownMetadata.source === "cloud") {
         try {
           const blob = await getCloudLatestBlob(cacheBuster);
@@ -649,6 +753,18 @@
           return;
         } catch (cloudDownloadError) {
           console.warn("Cloud latest copy is newer but unreachable.", cloudDownloadError);
+          if (
+            githubApiMetadata &&
+            githubApiMetadata.savedAt >= newestKnownMetadata.savedAt
+          ) {
+            const blob = await getGitHubApiLatestBlob(cacheBuster);
+            const savedName = triggerNamedDownload(
+              blob,
+              githubApiMetadata.downloadName,
+            );
+            setStatus(`Latest file downloaded: ${savedName}`, "ok");
+            return;
+          }
           if (rawMetadata && rawMetadata.savedAt >= newestKnownMetadata.savedAt) {
             const blob = await getRawLatestBlob(cacheBuster);
             const savedName = triggerNamedDownload(blob, rawMetadata.downloadName);

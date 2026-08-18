@@ -128,16 +128,18 @@ async function fetchCurrentStorageObject() {
 
 async function getMirroredSavedAt() {
   try {
-    const response = await fetch(
-      `https://raw.githubusercontent.com/${githubRepo}/${githubBranch}/${metadataRepoPath}?v=${Date.now()}`,
-      { cache: "no-store" },
+    const metadataFile = await githubRequest(
+      `/repos/${githubRepo}/contents/${metadataRepoPath}?ref=${
+        encodeURIComponent(githubBranch)
+      }`,
     );
 
-    if (!response.ok) {
+    if (metadataFile.type !== "file" || !metadataFile.content) {
       return 0;
     }
 
-    const metadata = await response.json();
+    const metadataText = atob(String(metadataFile.content).replace(/\s/g, ""));
+    const metadata = JSON.parse(metadataText);
     return Number(metadata.savedAt) || 0;
   } catch (_err) {
     return 0;
